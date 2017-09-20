@@ -1,8 +1,8 @@
 package plugin
 
 import (
-	"encoding/json"
 	"encoding/binary"
+	"github.com/pquerna/ffjson/ffjson"
 )
 
 type Packet struct {
@@ -65,10 +65,11 @@ func NewBootInitiationPacket(id uint32, mac string) (*BootInitiationReqPacket) {
 }
 
 func (self *BootInitiationReqPacket) Serialize() ([]byte, bool){
-	body, err := json.Marshal(self)
+	body, err := ffjson.Marshal(self)
 	if err != nil {
 		return nil, false
 	}
+	ffjson.Pool(body)
 
 	return addHeader(body), true
 }
@@ -85,10 +86,11 @@ func NewRegisterPacket(id uint32, mac, checkGateway, devRnd string) (*RegisterRe
 }
 
 func (self *RegisterReqPacket) Serialize() ([]byte, bool){
-	body, err := json.Marshal(self)
+	body, err := ffjson.Marshal(self)
 	if err != nil {
 		return nil, false
 	}
+	ffjson.Pool(body)
 
 	return addHeader(body), true
 }
@@ -102,10 +104,11 @@ func NewHBPacket() (*HBPacket) {
 }
 
 func (self *HBPacket) Serialize() ([]byte, bool){
-	body, err := json.Marshal(self)
+	body, err := ffjson.Marshal(self)
 	if err != nil {
 		return nil, false
 	}
+	ffjson.Pool(body)
 
 	return addHeader(body), true
 }

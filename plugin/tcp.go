@@ -7,15 +7,17 @@ import (
 	"errors"
 	"io"
 	"encoding/binary"
-	"encoding/json"
 	"crypto/md5"
 	"time"
+	"github.com/pquerna/ffjson/ffjson"
 )
 
 const (
 	Write_Chan_Cap = 32
 	DevRND         = "0123456789ABCDEF"
 	READ_TIMEOUT   = 10 * time.Second
+	HB_INTERVAL    = 60 * time.Second
+	RETRY_INTERVAL = 30 * time.Second
 )
 
 var (
@@ -36,6 +38,7 @@ type TCPConn struct {
 	mac        string
 	sn         string
 	loid       string
+	hbReq      []byte
 }
 
 func NewTCPConn(msgChan chan Msg, id uint32, local, remote, mac, sn, loid string) *TCPConn {
@@ -52,6 +55,9 @@ func NewTCPConn(msgChan chan Msg, id uint32, local, remote, mac, sn, loid string
 	self.loid = loid
 	self.reader = nil
 	self.writer = nil
+
+	hb := NewHBPacket()
+	self.hbReq, _ = hb.Serialize()
 
 	return self
 }
@@ -71,10 +77,10 @@ func (self *TCPConn) Run() {
 			break
 		}
 
-		time.Sleep(10 * time.Second)
+		time.Sleep(RETRY_INTERVAL)
 	}
 
-	self.msgChan <- Msg{ID:self.id, Event:E_ABORT}
+	self.msgChan <- Msg{ID: self.id, Event: E_ABORT}
 }
 
 func (self *TCPConn) connect() bool {
@@ -85,7 +91,7 @@ func (self *TCPConn) connect() bool {
 
 	conn, err := d.Dial("tcp", self.remoteAddr)
 	if err != nil {
-		fmt.Errorf("connect to %s error :%s \n", self.remoteAddr, err.Error())
+		fmt.Printf("connect to %s error :%s \n", self.remoteAddr, err.Error())
 		return false
 	}
 
@@ -127,7 +133,7 @@ func (self *TCPConn) writeBuf(buf []byte) {
 	select {
 	case self.writeChan <- buf:
 	default:
-		fmt.Errorf("writeBuf: channel full")
+		fmt.Println("writeBuf: channel full")
 		self.conn.(*net.TCPConn).SetLinger(0)
 		self.close()
 	}
@@ -144,7 +150,7 @@ func (self *TCPConn) _writeFull(buf []byte) (err error) {
 		n += nn
 	}
 	if err != nil {
-		fmt.Errorf("WriteRoutine Write error: %s", err.Error())
+		fmt.Printf("WriteRoutine Write error: %s\n", err.Error())
 	}
 	return
 }
@@ -166,7 +172,7 @@ func (self *TCPConn) writeRoutine() {
 				}
 			}
 			if err != nil {
-				fmt.Errorf("WriteRoutine Flush error: %s", err.Error())
+				fmt.Printf("WriteRoutine Flush error: %s\n", err.Error())
 				return
 			}
 			//block
@@ -192,20 +198,20 @@ func (self *TCPConn) _readFull(to time.Duration) ([]byte, error) {
 
 	_, err = io.ReadFull(self.reader, msgHeader)
 	if err != nil {
-		fmt.Errorf("read msg header error: %s", err.Error())
+		fmt.Printf("read msg header error: %s\n", err.Error())
 		return nil, err
 	}
 
 	msgLen = int(binary.BigEndian.Uint32(msgHeader))
 	if msgLen <= 0 {
-		fmt.Errorf("invalid msg length: %d", msgLen)
+		fmt.Printf("invalid msg length: %d\n", msgLen)
 		return nil, err
 	}
 
 	msg := make([]byte, msgLen)
 	_, err = io.ReadFull(self.reader, msg)
 	if err != nil {
-		fmt.Errorf("read msg body error: %s", err.Error())
+		fmt.Printf("read msg body error: %s\n", err.Error())
 		return nil, err
 	}
 
@@ -231,7 +237,7 @@ func (self *TCPConn) readRoutine() {
 
 func (self *TCPConn) dispatch(msg []byte) {
 	pkt := Packet{}
-	json.Unmarshal(msg, &pkt)
+	ffjson.Unmarshal(msg, &pkt)
 
 	self.doRPC(pkt)
 }
@@ -245,21 +251,20 @@ func (self *TCPConn) init() bool {
 
 	_, err := self.conn.Write(b)
 	if err != nil {
-		fmt.Errorf("write doBootInitiation fails: %s", err.Error())
+		fmt.Printf("write doBootInitiation fails: %s\n", err.Error())
 		return false
 	}
-	self.msgChan <- Msg{ID:self.id, Event: E_BOOT_SENT}
+	self.msgChan <- Msg{ID: self.id, Event: E_BOOT_SENT}
 
 	msg, err := self._readFull(READ_TIMEOUT)
 	if err != nil {
-		fmt.Errorf("read doBootInitiation respone fails: %s", err.Error())
+		fmt.Printf("read doBootInitiation respone fails: %s\n", err.Error())
 		return false
 	}
-	self.msgChan <- Msg{ID:self.id, Event:E_BOOT_REPLY}
-
+	self.msgChan <- Msg{ID: self.id, Event: E_BOOT_REPLY}
 
 	pkt := BootInitiationRespPacket{}
-	json.Unmarshal(msg, &pkt)
+	ffjson.Unmarshal(msg, &pkt)
 	return self.doBootInitiationResp(pkt)
 }
 
@@ -286,20 +291,20 @@ func (self *TCPConn) doRegister(challengeCode string) bool {
 
 	_, err := self.conn.Write(b)
 	if err != nil {
-		fmt.Errorf("write Register fails: %s", err.Error())
+		fmt.Printf("write Register fails: %s\n", err.Error())
 		return false
 	}
-	self.msgChan <- Msg{ID:self.id, Event: E_REG_SENT}
+	self.msgChan <- Msg{ID: self.id, Event: E_REG_SENT}
 
 	msg, err := self._readFull(READ_TIMEOUT)
 	if err != nil {
-		fmt.Errorf("read Register respone fails: %s", err.Error())
+		fmt.Printf("read Register respone fails: %s\n", err.Error())
 		return false
 	}
-	self.msgChan <- Msg{ID:self.id, Event: E_REG_REPLY}
+	self.msgChan <- Msg{ID: self.id, Event: E_REG_REPLY}
 
 	pkt := RegisterRespPacket{}
-	json.Unmarshal(msg, &pkt)
+	ffjson.Unmarshal(msg, &pkt)
 	return self.doRegisterResp(pkt)
 }
 
@@ -330,15 +335,9 @@ func (self *TCPConn) doHB() {
 			break
 		}
 
-		time.Sleep(60 * time.Second)
-		hb := NewHBPacket()
-		b, ok := hb.Serialize()
-		if !ok {
-			break
-		}
-
-		self.writeBuf(b)
-		self.msgChan <- Msg{ID:self.id, Event:E_PING}
+		time.Sleep(HB_INTERVAL)
+		self.writeBuf(self.hbReq)
+		self.msgChan <- Msg{ID: self.id, Event: E_PING}
 	}
 }
 
@@ -346,7 +345,7 @@ func (self *TCPConn) doRPC(pkt Packet) {
 	//可能收到心跳响应和RPC请求
 	if pkt.PONG == "PONG" {
 		//ignore
-		self.msgChan <- Msg{ID:self.id, Event: E_PONG}
+		self.msgChan <- Msg{ID: self.id, Event: E_PONG}
 		return
 	}
 }
