@@ -25,20 +25,21 @@ var (
 )
 
 type TCPConn struct {
-	id         uint32
-	conn       net.Conn
-	reader     *bufio.Reader
-	writer     *bufio.Writer
-	writeChan  chan []byte
-	msgChan    chan Msg
-	isClose    bool //isClose标记仅在ResetConn、Close中设置，其它地方只读
-	isAbort    bool //网关注册失败时退出
-	localAddr  string
-	remoteAddr string
-	mac        string
-	sn         string
-	loid       string
-	hbReq      []byte
+	id           uint32
+	conn         net.Conn
+	reader       *bufio.Reader
+	writer       *bufio.Writer
+	writeChan    chan []byte
+	msgChan      chan Msg
+	isClose      bool //isClose标记仅在ResetConn、Close中设置，其它地方只读
+	isAbort      bool //网关注册失败时退出
+	localAddr    string
+	remoteAddr   string
+	mac          string
+	sn           string
+	loid         string
+	hbReq        []byte
+	plugins      map[string]InstallPacket //安装的插件
 }
 
 func NewTCPConn(msgChan chan Msg, id uint32, local, remote, mac, sn, loid string) *TCPConn {
@@ -55,6 +56,7 @@ func NewTCPConn(msgChan chan Msg, id uint32, local, remote, mac, sn, loid string
 	self.loid = loid
 	self.reader = nil
 	self.writer = nil
+	self.plugins = make(map[string]InstallPacket, 10)
 
 	hb := NewHBPacket()
 	self.hbReq, _ = hb.Serialize()
@@ -238,8 +240,46 @@ func (self *TCPConn) readRoutine() {
 func (self *TCPConn) dispatch(msg []byte) {
 	pkt := Packet{}
 	ffjson.Unmarshal(msg, &pkt)
+	m := pkt.RPCMethod
 
-	self.doRPC(pkt)
+	switch m {
+	case "":
+		//recognize as PONG, just ignore
+		self.msgChan <- Msg{ID: self.id, Event: E_PONG}
+	case "Install":
+		p := InstallPacket{}
+		ffjson.Unmarshal(msg, &p)
+		self.doInstall(p)
+	case "Install_query":
+		p := InstallQueryPacket{}
+		ffjson.Unmarshal(msg, &p)
+		self.doInstallQuery(p)
+	case "Install_cancel":
+		p := InstallCancelPacket{}
+		ffjson.Unmarshal(msg, &p)
+		self.doInstallCancel(p)
+	case "UnInstall":
+		p := UnInstallPacket{}
+		ffjson.Unmarshal(msg, &p)
+		self.doUnInstall(p)
+	case "Stop":
+		p := StopPacket{}
+		ffjson.Unmarshal(msg, &p)
+		self.doStop(p)
+	case "Run":
+		p := RunPacket{}
+		ffjson.Unmarshal(msg, &p)
+		self.doRun(p)
+	case "FactoryPlugin":
+		p := FactoryPluginPacket{}
+		ffjson.Unmarshal(msg, &p)
+		self.doFactoryPlugin(p)
+	case "ListPlugin":
+		p := ListPluginPacket{}
+		ffjson.Unmarshal(msg, &p)
+		self.doListPlugin(p)
+	}
+
 }
 
 func (self *TCPConn) init() bool {
@@ -280,7 +320,7 @@ func (self *TCPConn) doBootInitiationResp(pkt BootInitiationRespPacket) bool {
 
 func (self *TCPConn) doRegister(challengeCode string) bool {
 	//param := challengeCode + self.sn + self.loid
-	param := challengeCode + self.sn
+	param := challengeCode + self.sn + "123"
 	m := fmt.Sprintf("%x", md5.Sum([]byte(param)))
 
 	rp := NewRegisterPacket(self.id, self.mac, m, DevRND)
@@ -341,11 +381,104 @@ func (self *TCPConn) doHB() {
 	}
 }
 
-func (self *TCPConn) doRPC(pkt Packet) {
-	//可能收到心跳响应和RPC请求
-	if pkt.PONG == "PONG" {
-		//ignore
-		self.msgChan <- Msg{ID: self.id, Event: E_PONG}
-		return
+func (self *TCPConn) doInstall(pkt InstallPacket) {
+	pkt.Run = true
+	self.plugins[pkt.Plugin_Name] = pkt
+
+	resp := RespPacket{ID:pkt.ID, Result:0}
+	bytes, _ := resp.Serialize()
+	self.writeBuf(bytes)
+}
+
+func (self *TCPConn) doInstallQuery(pkt InstallQueryPacket) {
+	resp := InstallQueryRespPacket{ID:pkt.ID, Result:0, Percent:"100"}
+	bytes, _ := resp.Serialize()
+	self.writeBuf(bytes)
+}
+
+func (self *TCPConn) doInstallCancel(pkt InstallCancelPacket) {
+	resp := InstallCancelRespPacket{ID:pkt.ID}
+	_, exists := self.plugins[pkt.Plugin_Name]
+	if exists {
+		resp.Result = -111
+	} else {
+		resp.Result = -101
 	}
+
+	bytes, _ := resp.Serialize()
+	self.writeBuf(bytes)
+}
+
+func (self *TCPConn) doUnInstall(pkt UnInstallPacket) {
+	resp := UnInstallRespPacket{ID:pkt.ID}
+	_, exists := self.plugins[pkt.Plugin_Name]
+	if exists {
+		resp.Result = 0
+		delete(self.plugins, pkt.Plugin_Name)
+	} else {
+		resp.Result = -112
+	}
+
+	bytes, _ := resp.Serialize()
+	self.writeBuf(bytes)
+}
+
+func (self *TCPConn) doStop(pkt StopPacket) {
+	resp := StopRespPacket{ID:pkt.ID}
+	p, exists := self.plugins[pkt.Plugin_Name]
+	if exists {
+		resp.Result = 0
+		p.Run = false
+	} else {
+		resp.Result = -112
+	}
+
+	bytes, _ := resp.Serialize()
+	self.writeBuf(bytes)
+}
+
+func (self *TCPConn) doRun(pkt RunPacket) {
+	resp := RunRespPacket{ID:pkt.ID}
+	p, exists := self.plugins[pkt.Plugin_Name]
+	if exists {
+		resp.Result = 0
+		p.Run = true
+	} else {
+		resp.Result = -112
+	}
+
+	bytes, _ := resp.Serialize()
+	self.writeBuf(bytes)
+}
+
+func (self *TCPConn) doFactoryPlugin(pkt FactoryPluginPacket) {
+	resp := FactoryPluginRespPacket{ID:pkt.ID}
+	_, exists := self.plugins[pkt.Plugin_Name]
+	if exists {
+		resp.Result = 0
+	} else {
+		resp.Result = -112
+	}
+
+	bytes, _ := resp.Serialize()
+	self.writeBuf(bytes)
+}
+
+func (self *TCPConn) doListPlugin(pkt ListPluginPacket) {
+	resp := ListPluginRespPacket{ID:pkt.ID}
+	for _, p := range self.plugins {
+		p2 := InstalledPacket{}
+		if p.Run {
+			p2.Run = 1
+		} else {
+			p2.Run = 0
+		}
+		p2.Plugin_Name = p.Plugin_Name
+		p2.Version = p.Version
+
+		resp.Plugin = append(resp.Plugin, p2)
+	}
+
+	bytes, _ := resp.Serialize()
+	self.writeBuf(bytes)
 }

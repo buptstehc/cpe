@@ -7,36 +7,122 @@ import (
 
 type Packet struct {
 	RPCMethod string
-	ID uint32
+}
+
+type RespPacket struct {
+	ID     uint32
 	Result int8
-	PONG string
-	Interval string
+}
+
+type InstallPacket struct {
+	ID           uint32
+	Plugin_Name  string
+	Version      string
+	Download_url string
+	Plugin_size  string
+	Run          bool
+}
+
+type InstalledPacket struct {
+	Plugin_Name  string
+	Version      string
+	Run          uint8
+}
+
+type InstallQueryPacket struct {
+	ID uint32
+}
+
+type InstallQueryRespPacket struct {
+	ID      uint32
+	Result  int8
+	Percent string
+}
+
+type InstallCancelPacket struct {
+	ID          uint32
+	Plugin_Name string
+}
+
+type InstallCancelRespPacket struct {
+	ID     uint32
+	Result int8
+}
+
+type UnInstallPacket struct {
+	ID          uint32
+	Plugin_Name string
+}
+
+type UnInstallRespPacket struct {
+	ID     uint32
+	Result int8
+}
+
+type StopPacket struct {
+	ID          uint32
+	Plugin_Name string
+}
+
+type StopRespPacket struct {
+	ID     uint32
+	Result int8
+}
+
+type RunPacket struct {
+	ID          uint32
+	Plugin_Name string
+}
+
+type RunRespPacket struct {
+	ID     uint32
+	Result int8
+}
+
+type FactoryPluginPacket struct {
+	ID          uint32
+	Plugin_Name string
+}
+
+type FactoryPluginRespPacket struct {
+	ID     uint32
+	Result int8
+}
+
+type ListPluginPacket struct {
+	ID uint32
+}
+
+type ListPluginRespPacket struct {
+	ID     uint32
+	Result int8
+	Plugin []InstalledPacket
 }
 
 type BootInitiationReqPacket struct {
-	RPCMethod string
-	ID uint32
-	MAC string
+	RPCMethod   string
+	ID          uint32
+	MAC         string
 	PROTVersion string
 }
 
 type BootInitiationRespPacket struct {
-	ID uint32
-	Result int8
+	ID            uint32
+	Result        int8
 	ChallengeCode string
 }
 
 type RegisterReqPacket struct {
-	RPCMethod string
-	ID uint32
-	MAC string
+	RPCMethod    string
+	ID           uint32
+	MAC          string
 	CheckGateway string
-	DevRND string
+	DevRND       string
 }
 
 type RegisterRespPacket struct {
-	ID uint32
-	Result int8
+	ID            uint32
+	Result        int8
 	CheckPlatform string
 }
 
@@ -47,7 +133,7 @@ type HBPacket struct {
 
 func addHeader(body []byte) []byte {
 	l := len(body)
-	msg := make([]byte, l + 4)
+	msg := make([]byte, l+4)
 	binary.BigEndian.PutUint32(msg, uint32(l))
 	copy(msg[4:], body)
 
@@ -64,7 +150,7 @@ func NewBootInitiationPacket(id uint32, mac string) (*BootInitiationReqPacket) {
 	return b
 }
 
-func (self *BootInitiationReqPacket) Serialize() ([]byte, bool){
+func (self *BootInitiationReqPacket) Serialize() ([]byte, bool) {
 	body, err := ffjson.Marshal(self)
 	if err != nil {
 		return nil, false
@@ -85,7 +171,7 @@ func NewRegisterPacket(id uint32, mac, checkGateway, devRnd string) (*RegisterRe
 	return b
 }
 
-func (self *RegisterReqPacket) Serialize() ([]byte, bool){
+func (self *RegisterReqPacket) Serialize() ([]byte, bool) {
 	body, err := ffjson.Marshal(self)
 	if err != nil {
 		return nil, false
@@ -103,7 +189,97 @@ func NewHBPacket() (*HBPacket) {
 	return b
 }
 
-func (self *HBPacket) Serialize() ([]byte, bool){
+func (self *RespPacket) Serialize() ([]byte, bool) {
+	body, err := ffjson.Marshal(self)
+	if err != nil {
+		return nil, false
+	}
+	ffjson.Pool(body)
+
+	return addHeader(body), true
+}
+
+func (self *HBPacket) Serialize() ([]byte, bool) {
+	body, err := ffjson.Marshal(self)
+	if err != nil {
+		return nil, false
+	}
+	ffjson.Pool(body)
+
+	return addHeader(body), true
+}
+
+func (self *InstallQueryRespPacket) Serialize() ([]byte, bool) {
+	body, err := ffjson.Marshal(self)
+	if err != nil {
+		return nil, false
+	}
+	ffjson.Pool(body)
+
+	return addHeader(body), true
+}
+
+func (self *InstallCancelRespPacket) Serialize() ([]byte, bool) {
+	body, err := ffjson.Marshal(self)
+	if err != nil {
+		return nil, false
+	}
+	ffjson.Pool(body)
+
+	return addHeader(body), true
+}
+
+func (self *UnInstallRespPacket) Serialize() ([]byte, bool) {
+	body, err := ffjson.Marshal(self)
+	if err != nil {
+		return nil, false
+	}
+	ffjson.Pool(body)
+
+	return addHeader(body), true
+}
+
+func (self *StopRespPacket) Serialize() ([]byte, bool) {
+	body, err := ffjson.Marshal(self)
+	if err != nil {
+		return nil, false
+	}
+	ffjson.Pool(body)
+
+	return addHeader(body), true
+}
+
+func (self *RunRespPacket) Serialize() ([]byte, bool) {
+	body, err := ffjson.Marshal(self)
+	if err != nil {
+		return nil, false
+	}
+	ffjson.Pool(body)
+
+	return addHeader(body), true
+}
+
+func (self *FactoryPluginRespPacket) Serialize() ([]byte, bool) {
+	body, err := ffjson.Marshal(self)
+	if err != nil {
+		return nil, false
+	}
+	ffjson.Pool(body)
+
+	return addHeader(body), true
+}
+
+func (self *ListPluginRespPacket) Serialize() ([]byte, bool) {
+	body, err := ffjson.Marshal(self)
+	if err != nil {
+		return nil, false
+	}
+	ffjson.Pool(body)
+
+	return addHeader(body), true
+}
+
+func (self *InstalledPacket) Serialize() ([]byte, bool) {
 	body, err := ffjson.Marshal(self)
 	if err != nil {
 		return nil, false
