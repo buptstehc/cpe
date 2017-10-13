@@ -40,6 +40,7 @@ type TCPConn struct {
 	loid         string
 	hbReq        []byte
 	plugins      map[string]InstallPacket //安装的插件
+	isPlgRunning map[string]bool
 }
 
 func NewTCPConn(msgChan chan Msg, id uint32, local, remote, mac, sn, loid string) *TCPConn {
@@ -57,6 +58,7 @@ func NewTCPConn(msgChan chan Msg, id uint32, local, remote, mac, sn, loid string
 	self.reader = nil
 	self.writer = nil
 	self.plugins = make(map[string]InstallPacket, 10)
+	self.isPlgRunning = make(map[string]bool, 10)
 
 	hb := NewHBPacket()
 	self.hbReq, _ = hb.Serialize()
@@ -382,8 +384,8 @@ func (self *TCPConn) doHB() {
 }
 
 func (self *TCPConn) doInstall(pkt InstallPacket) {
-	pkt.Run = true
 	self.plugins[pkt.Plugin_Name] = pkt
+	self.isPlgRunning[pkt.Plugin_Name] = true
 
 	resp := RespPacket{ID:pkt.ID, Result:0}
 	bytes, _ := resp.Serialize()
@@ -415,6 +417,7 @@ func (self *TCPConn) doUnInstall(pkt UnInstallPacket) {
 	if exists {
 		resp.Result = 0
 		delete(self.plugins, pkt.Plugin_Name)
+		delete(self.isPlgRunning, pkt.Plugin_Name)
 	} else {
 		resp.Result = -112
 	}
@@ -425,10 +428,10 @@ func (self *TCPConn) doUnInstall(pkt UnInstallPacket) {
 
 func (self *TCPConn) doStop(pkt StopPacket) {
 	resp := StopRespPacket{ID:pkt.ID}
-	p, exists := self.plugins[pkt.Plugin_Name]
+	_, exists := self.plugins[pkt.Plugin_Name]
 	if exists {
 		resp.Result = 0
-		p.Run = false
+		self.isPlgRunning[pkt.Plugin_Name] = false
 	} else {
 		resp.Result = -112
 	}
@@ -439,10 +442,10 @@ func (self *TCPConn) doStop(pkt StopPacket) {
 
 func (self *TCPConn) doRun(pkt RunPacket) {
 	resp := RunRespPacket{ID:pkt.ID}
-	p, exists := self.plugins[pkt.Plugin_Name]
+	_, exists := self.plugins[pkt.Plugin_Name]
 	if exists {
 		resp.Result = 0
-		p.Run = true
+		self.isPlgRunning[pkt.Plugin_Name] = true
 	} else {
 		resp.Result = -112
 	}
@@ -468,7 +471,7 @@ func (self *TCPConn) doListPlugin(pkt ListPluginPacket) {
 	resp := ListPluginRespPacket{ID:pkt.ID}
 	for _, p := range self.plugins {
 		p2 := InstalledPacket{}
-		if p.Run {
+		if self.isPlgRunning[p.Plugin_Name] {
 			p2.Run = 1
 		} else {
 			p2.Run = 0
